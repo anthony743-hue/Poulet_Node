@@ -1,28 +1,29 @@
 import { generalDAO } from "../util/generalDAO.js";
-import { Mouvement } from '../models/Mouvement.js';
-import { MouvementIncubation } from '../models/mvtIncu.js';
 import { getConnection } from '../util/dbconnect.js';
-import { IncubationLib } from "../models/mvtIncu.js";
 
-export class MouvementDAO extends generalDAO {
-    constructor() { super('Mouvement', Mouvement); }
-}
-
-export async function MvtIncufindByDate(idRace,date){
+export async function MvtIncufindByDate(idRace, date) {
+    try {
         const pool = await getConnection();
+        
+        // Base de la requête
+        let sqlQuery = "SELECT * FROM V_INCUBATION_LIB WHERE date < @date";
+        
+        // Préparation de la requête avec mssql
+        const request = pool.request().input('date', date);
 
-        let query = "select * FROM V_INCUBATION_LIB WHERE date < @date";
-        const rows = null;
-        if(idRace){
-            query+= " AND idrace = @race";
-            rows = pool.request()
-                .input('date', date)
-                .input('race', idRace)
-                .query(query);
-        } else {
-            rows = pool.request()
-                .input('date', date)
-                .query(query);
+        // Ajout conditionnel du filtre par race
+        if (idRace) {
+            sqlQuery += " AND idrace = @race";
+            request.input('race', idRace);
         }
-        return rows.recordset;
+
+        // Exécution de la requête avec await
+        const result = await request.query(sqlQuery);
+        
+        return result.recordset;
+    } catch (error) {
+        // Log de l'erreur pour faciliter le debug technique
+        console.error("Erreur dans MvtIncufindByDate :", error);
+        throw error;
+    }
 }

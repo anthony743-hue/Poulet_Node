@@ -1,14 +1,15 @@
-import { getConfByRace, getConfPSByRace } from "../dao/confDAO.js"
-import { findBeforeDate } from "../dao/RecensementDAO.js"
-import { getLotLib } from "../dao/lotDAO.js"
-import { MvtIncufindByDate } from "../dao/mvtDAO.js"
-import { PondfindByDate } from "../dao/pondDAO.js"
-import { getConnection } from "../util/dbconnect.js"
+import { getConfByRace, getConfPSByRace } from "../dao/confDAO.js";
+import { findBeforeDate } from "../dao/RecensementDAO.js";
+import { getLotLib } from "../dao/lotDAO.js";
+import { MvtIncufindByDate } from "../dao/mvtDAO.js";
+import { PondfindByDate } from "../dao/pondDAO.js";
+import { getConnection } from "../util/dbconnect.js";
 
-export function getSituationComplet(idRace, date) {
-    const stAt = getSituationAtody(idRace, date);
-    const stSkf = getSituationForSakafo(idRace, date);
-    const arr = [];
+export async function getSituationComplet(idRace, date) {
+    const stAt = await getSituationAtody(idRace, date);
+    const stSkf = await getSituationForSakafo(idRace, date);
+    const resultMap = new Map();
+
     for (const [key, value] of stSkf) {
         let temp = {
             nomLot: "",
@@ -17,77 +18,78 @@ export function getSituationComplet(idRace, date) {
         };
 
         const tmpAt = stAt.get(key);
-        let nbAkoho = value.qte;
-        let t1 = {};
+        let nbAkoho = value.qte - value.mort; // Prise en compte des morts pour la situation finale
+        
         let t2 = {
-            achat: nbAkoho * value.puA,/** Nombre de poules obtenus hors de l'elevage * PUAchat */
-            sakafo: value.sakafo, /** fois le prix par gramme de sakafo */
+            achat: value.qte * value.puA,
+            sakafo: value.sakafo, 
             valeurAtody: value.puAtody,
-            benefice: nbAkoho * value.puV - ( nbAkoho * value.puA )
+            benefice: (nbAkoho * value.puV) - (value.qte * value.puA) - value.sakafo
         };
+
         let t3 = {
             nombrePoules : nbAkoho,
             nbAtody : 0,
-            poidsMoyen : getPoids(value.race, value.keep_date_begin,date,value.keep_age_0)
+            poidsMoyen : await getPoids(value.race, value.keep_date_begin, date, value.keep_age_0)
         };
-        if (tmpAt !== null) {
+
+        if (tmpAt) {
             t3.nbAtody = tmpAt.elevage;
-            t2.benefice+= tmpAt.vente;
+            t2.benefice += tmpAt.vente;
         }
+
         temp.financier = t2;
         temp.environnement = t3;
-        arr.set(key, temp);
+        resultMap.set(key, temp);
     }
-    return arr;
+    return resultMap;
 }
 
 async function getSituationAtody(idRace, date) {
-    const lsIncub = MvtIncufindByDate(idRace, date);
-    const lsPond = PondfindByDate(idRace, date);
-    const mapAtody = {};
-    lsPond.forEach(element => {
+    const lsIncub = await MvtIncufindByDate(idRace, date);
+    const lsPond = await PondfindByDate(idRace, date);
+    const mapAtody = new Map(); // Utilisation de Map pour la cohérence
+
+    for (const element of lsPond) {
         const key = element.idLot;
         if (!mapAtody.has(key)) {
-            const temp = {
-                vente: 0,
-                elevage: 0
-            };
-            mapAtody.set(key, temp);
+            mapAtody.set(key, { vente: 0, elevage: 0 });
         }
         const temp = mapAtody.get(key);
-        if (element.PU == 0) {
+        if (element.PU === 0) {
             temp.elevage += element.qte;
         } else {
-            temp.vente += element.qte;
+            temp.vente += (element.qte * element.PU);
         }
-        mapAtody.set(key, temp);
-    });
+    }
 
-    lsIncub.forEach(element => {
+    for (const element of lsIncub) {
         const key = element.idLot;
-        const temp = mapAtody.get(key);
-        temp.elevage -= element.quantite;
-        mapAtody.set(key, temp);
-    });
+        if (mapAtody.has(key)) {
+            const temp = mapAtody.get(key);
+            temp.elevage -= element.quantite;
+        }
+    }
 
     return mapAtody;
 }
 
 async function getLibComplet(idRace, date) {
-    const confRaceDt = getConfByRace(idRace);
-    const confRacePS = getConfPSByRace(idRace);
-    const lsLots = getLotLib(idRace, date);
+    // Exécution parallèle pour gagner du temps
+    const [confRaceDt, confRacePS, lsLots] = await Promise.all([
+        getConfByRace(idRace),
+        getConfPSByRace(idRace),
+        getLotLib(idRace)
+    ]);
 
-    const arr = {};
-    for (let i = 0; i < lsLots.length; i++) {
-        if (lsLots[i].daty.getTime() < date.getTime()) {
-            const key = lsLots[i].id;
-            if (!arr.has(key)) {
-                arr.set(key, lsLots[i]);
-            }
+    let mapLots = new Map();
+    for (const lot of lsLots) {
+        if (new Date(lot.Daty).getTime() < new Date(date).getTime()) {
+            mapLots.set(lot.IdLot, lot);
         }
     }
-    return { data: arr, confDt: confRaceDt, confPs: confRacePS };
+    
+    return { data: mapLots, confDt: confRaceDt, confPs: confRacePS };
 }
 
 function getInDays(dt) {
@@ -95,95 +97,84 @@ function getInDays(dt) {
 }
 
 async function getSituationForSakafo(idRace, date) {
-    const lib = getLibComplet(idRace, date);
+    const lib = await getLibComplet(idRace, date);
     const mapLot = lib.data;
     const conf2 = lib.confPs;
     const conf1 = lib.confDt;
 
-    const map = {};
-    const allRecens = findBeforeDate(date);
+    const mapResult = new Map();
+    const allRecens = await findBeforeDate(date);
+
     for (const [key, value] of mapLot) {
-        const recens = allRecens.get(key);
+        const recens = allRecens.get(key) || [];
+        const configRace = conf1.get(value.IdRace) || {};
 
         const temp = {
-            keep_date_begin: value.daty,
-            keep_age_0 : value.age,
-            date_begin: value.daty,
-            age_0: value.age,
+            keep_date_begin: value.Daty,
+            keep_age_0 : value.Age,
+            date_begin: value.Daty,
+            age_0: value.Age,
             sakafo: 0,
             mort: 0,
-            qte: value.quantite,
+            qte: value.Quantite,
             race: value.IdRace,
-            puA: conf1.get(value.IdRace).PUAchatPoule,
-            puV: conf1.get(value.IdRace).PUVentePoule,
-            puAtody : conf1.get(value.IdRace).PuVenteOeuf
+            puA: configRace.PUAchatPoule || 0,
+            puV: configRace.PUVentePoule || 0,
+            puAtody : configRace.PuVenteOeuf || 0
         };
 
-        for (let i = 0; i < recens.length; i++) {
-            const daty_begin = temp.date_begin;
-            const date_end = recens[i].dateRecensement;
-            const diff_date = date_end - daty_begin;
-
-            let day_left = getInDays(diff_date) - 3600 * 24;           /* Verifier la coherence */
-            let begin = daty_begin.getDay();
-
-            const age_n = Math.floor(day_left / 7) + temp.age_0;
-
-            let sum = 0; let j = 0; let diff = 0; let val_j = 0;
-            for (j = temp.age_0; j < age_n - 1; j++) {
-                diff = 7 - begin + 1;
-                val_j = Math.floor(conf2[j].Quantite / 7);
-                sum += val_j * diff;
-                day_left -= diff;
-                begin = 1;
-            }
-
-            val_j = Math.floor(conf2[j + 1].Quantite / 7);
-            sum += val_j * day_left;
-
-            temp.date_begin = date_end;
-            temp.age_0 = age_n;
-            temp.sakafo += (temp.qte - recens[i].quantite - temp.mort) * sum;
-            temp.mort += recens[i].quantite;
+        // --- Logique Recensement ---
+        for (const r of recens) {
+            const diff_date = new Date(r.dateRecensement) - new Date(temp.date_begin);
+            const dataSakafo = calculerConsommation(diff_date, temp.date_begin, temp.age_0, conf2);
+            
+            temp.sakafo += (temp.qte - temp.mort) * dataSakafo.sum;
+            temp.mort += r.quantite;
+            temp.date_begin = r.dateRecensement;
+            temp.age_0 = dataSakafo.newAge;
         }
 
-        const diff_date = date - temp.date_begin;
-
-        let day_left = getInDays(diff_date) - 3600 * 24;
-        let begin = temp.date_begin.getDay();
-
-        const age_n = Math.floor(day_left / 7) + temp.age_0;
-
-        let sum = 0; let j = 0; let diff = 0; let val_j = 0;
-        for (j = temp.age_0; j < age_n - 1; j++) {
-            diff = 7 - begin + 1;
-            val_j = Math.floor(conf2[j].Quantite / 7);
-            sum += val_j * diff;
-            day_left -= diff;
-            begin = 1;
-        }
-
-        val_j = Math.floor(conf2[j + 1].Quantite / 7);
-        sum += val_j * day_left;
-        temp.sakafo += (temp.qte - temp.mort) * sum;
-        map.set(key, temp);
+        // --- Calcul jusqu'à la date finale ---
+        const diff_finale = new Date(date) - new Date(temp.date_begin);
+        const dataSakafoFinal = calculerConsommation(diff_finale, temp.date_begin, temp.age_0, conf2);
+        
+        temp.sakafo += (temp.qte - temp.mort) * dataSakafoFinal.sum;
+        mapResult.set(key, temp);
     }
 
-    return map;
+    return mapResult;
 }
 
-async function getPoids(idRace, date_begin, date_end, age){
-    
-    let diff = getInDays(date_end - date_begin) / 7 + age;
+// Extraction de la logique de calcul sakafo pour éviter la répétition
+function calculerConsommation(diff_ms, date_debut, age_debut, confSakafo) {
+    let day_left = getInDays(diff_ms);
+    let current_day_of_week = new Date(date_debut).getDay();
+    let sum = 0;
+    let current_age = age_debut;
+
+    while (day_left > 0) {
+        let days_in_this_week = Math.min(day_left, 7 - (current_day_of_week === 0 ? 7 : current_day_of_week) + 1);
+        let gramme_par_jour = (confSakafo[current_age]?.Quantite || 0) / 7;
+        
+        sum += gramme_par_jour * days_in_this_week;
+        day_left -= days_in_this_week;
+        current_day_of_week = 1; // On recommence en début de semaine prochaine
+        current_age++;
+    }
+    return { sum, newAge: current_age };
+}
+
+async function getPoids(idRace, date_begin, date_end, age) {
+    let diff_age = getInDays(new Date(date_end) - new Date(date_begin)) / 7 + age;
     try {
         const pool = await getConnection();
-        let query = "SELECT SUM(Poids) as Poids FROM ConfPoids WHERE age AgeSemaine <= @age AND idrace = @race";
-        const rows = pool.request().query(query)
-                    .input('age', diff)
-                    .input('race', idRace)
-                    .query(query);
-        return rows.recordset;
+        const res = await pool.request()
+            .input('age', diff_age)
+            .input('race', idRace)
+            .query("SELECT TOP 1 Poids FROM ConfPoids WHERE AgeSemaine <= @age AND idrace = @race ORDER BY AgeSemaine DESC");
+        return res.recordset[0]?.Poids || 0;
     } catch (error) {
-        throw error;
+        console.error("Erreur getPoids:", error);
+        return 0;
     }
 }

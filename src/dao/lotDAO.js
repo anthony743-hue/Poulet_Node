@@ -1,23 +1,29 @@
 import { getConnection } from '../util/dbconnect.js';
 
-async function getLotLib(idRace, daty){
+/**
+ * Récupère la liste des lots avec libellés, optionnellement filtrée par race.
+ * @param {string|number|null} idRace - L'identifiant de la race ou null pour tous les lots.
+ */
+export async function getLotLib(idRace) {
     try {
         const pool = await getConnection();
-        let sql = "SELECT * FROM V_LOT_LIB WHERE Date < @daty";
-        const rows = null;
-        if (idRace === null) {
-            rows = await pool.request().query()
-                .input('daty', daty)
-                .query(sql);
-        } else {
-            sql += " AND idrace = @race";
-            rows = await pool.request().query()
-                .input('race', idRace)
-                .input('daty', daty)
-                .query(sql);
+        
+        // Initialisation de la requête de base
+        let sql = "SELECT * FROM V_LOT_LIB";
+        const request = pool.request();
+
+        // Gestion dynamique de la clause WHERE
+        if (idRace !== null && idRace !== undefined) {
+            sql += " WHERE idrace = @race";
+            request.input('race', idRace);
         }
-        return rows.recordset;
+
+        const result = await request.query(sql);
+        return result.recordset;
+
     } catch (error) {
+        // Log technique pour faciliter la maintenance
+        console.error("Erreur dans getLotLib :", error.message);
         throw error;
     }
 }
