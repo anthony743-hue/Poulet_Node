@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import raceRoute from './routes/raceRoute.js';
+import situationRoute from './routes/situationRoute.js'
 
 const app = express();
 const port = 3000;
@@ -11,6 +12,7 @@ app.use(express.json());
 
 // 2. Définition des routes
 app.use('/api/races', raceRoute);
+app.use('/api/situations', situationRoute);
 
 // 3. Gestion du 404 (doit être après les routes)
 app.use((req, res) => {

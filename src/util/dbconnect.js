@@ -12,7 +12,7 @@ const config = {
         idleTimeoutMillis: 30000
     },
     options: {
-        encrypt: true,
+        encrypt: false,
         trustServerCertificate: true
     }
 };
@@ -22,22 +22,13 @@ let poolPromise = null;
 export async function getConnection() {
     try {
         // Si le pool existe déjà et qu'il est connecté, on le renvoie
-        if (poolPromise) {
+        if (poolPromise !== null) {
             const pool = await poolPromise;
             if (pool.connected) return pool;
             poolPromise = null; // Si déconnecté, on réinitialise
         }
 
-        poolPromise = new sql.ConnectionPool(config)
-            .connect()
-            .then(pool => {
-                console.log('✅ Pool SQL Server pré-établi et prêt');
-                return pool;
-            })
-            .error(err => {
-                console.error('❌ Échec de la connexion initiale', err);
-                process.exit(1); // On arrête si la DB est injoignable
-            });
+        poolPromise = new sql.ConnectionPool(config).connect();
         console.log("Connexion a SQL Server etablie");
         return await poolPromise;
     } catch (error) {

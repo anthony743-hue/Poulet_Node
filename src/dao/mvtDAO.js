@@ -1,22 +1,28 @@
 import { generalDAO } from "../util/generalDAO.js";
-const { Mouvement } = require('../models/Mouvement');
-const { MouvementIncubation } = require('../models/mvtIncu');
-const { getConnection } = require('../util/dbconnect');
-const { IncubationLib } = require("../models/mvtIncu");
+import { Mouvement } from '../models/Mouvement.js';
+import { MouvementIncubation } from '../models/mvtIncu.js';
+import { getConnection } from '../util/dbconnect.js';
+import { IncubationLib } from "../models/mvtIncu.js";
 
 export class MouvementDAO extends generalDAO {
     constructor() { super('Mouvement', Mouvement); }
 }
 
-export class MouvementIncubationDAO extends generalDAO {
-    constructor() { super('MouvementIncubation', MouvementIncubation); }
-
-    async findByDate(idRace,date){
+export async function MvtIncufindByDate(idRace,date){
         const pool = await getConnection();
-        const rows = pool.request()
+
+        let query = "select * FROM V_INCUBATION_LIB WHERE date < @date";
+        const rows = null;
+        if(idRace){
+            query+= " AND idrace = @race";
+            rows = pool.request()
                 .input('date', date)
                 .input('race', idRace)
-                .query("select * FROM V_INCUBATION_LIB WHERE idrace = @race AND date < @date ORDER BY date");
-        return rows.recordset.map( row => new IncubationLib(row) );
-    }
+                .query(query);
+        } else {
+            rows = pool.request()
+                .input('date', date)
+                .query(query);
+        }
+        return rows.recordset;
 }
