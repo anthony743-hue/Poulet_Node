@@ -6,7 +6,7 @@ export async function MvtIncufindByDate(idRace, date) {
         const pool = await getConnection();
         
         // Base de la requête
-        let sqlQuery = "SELECT * FROM V_INCUBATION_LIB WHERE date < @date";
+        let sqlQuery = "SELECT * FROM V_INCUBATION_LIB WHERE [Date] < @date";
         
         // Préparation de la requête avec mssql
         const request = pool.request().input('date', date);
