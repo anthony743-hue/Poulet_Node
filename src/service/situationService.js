@@ -4,12 +4,36 @@ import { getLotLib } from "../dao/lotDAO.js";
 import { MvtIncufindByDate } from "../dao/mvtDAO.js";
 import { PondfindByDate } from "../dao/pondDAO.js";
 import { getConnection } from "../util/dbconnect.js";
+
 export async function getSituationComplet(idRace, date) {
     // Formatage de la date pour SQL si nécessaire
     const dateStr = date instanceof Date ? date.toISOString().split('T')[0] : date;
+
+    const [confRaceDt, confRacePS] = await Promise.all([
+        getConfByRace(idRace),
+        getConfPSByRace(idRace)
+    ]);
     
-    
-    const stSkf = await getSituationForSakafo(idRace, dateStr);
+    const stAP = await getSituationAtody(idRace, date, confRaceDt);
+    const stAt = stAP.norm;
+    const [stSkf,stASkf] = await Promise.all([
+        getSituationForSakafo(idRace, dateStr, confRacePS, confRaceDt),
+        getSituationGeneralSakafo(stAP.second, confRacePS, confRaceDt, {}, dateStr)
+    ]);
+    console.log(stASkf);
+    const resultMap = new Map();
+    const t1 = await traitementSituation(stSkf, stAt, dateStr);
+    const t2 = await traitementSituation(stASkf, {}, dateStr);
+    for(const [key, val] of t1){
+        resultMap.set(key, val);
+    }
+    for(const [key, val] of t2){
+        resultMap.set(key, val);
+    }
+    return resultMap;
+}
+
+async function traitementSituation(stSkf, stAt = Map(), date){
     const resultMap = new Map();
 
     for (const [key, value] of stSkf) {
@@ -30,34 +54,48 @@ export async function getSituationComplet(idRace, date) {
             }
         };
 
-        // const tmpAt = stAt.get(key);
-        // if (tmpAt) {
-        //     temp.environnement.nbAtody = tmpAt.elevage;
-        //     temp.financier.benefice += tmpAt.vente * value.puAtody;
-        // }
+        const tmpAt = stAt !== undefined && stAt !== null && stAt.size > 0 ? stAt.get(key) || null : null;
+        if (tmpAt) {
+            temp.environnement.nbAtody = tmpAt.elevage;
+            temp.financier.benefice += tmpAt.vente * value.puAtody;
+        }
 
         resultMap.set(key, temp);
     }
     return resultMap;
 }
 
-export async function getSituationAtody(idRace, date) {
+function getQuantiteLotAkohoFromAtody(confRace, quantite, idRace){
+    return 0;
+}
+
+export async function getSituationAtody(idRace, date, confRace) {
     const [ lsIncub, lsPond ] = await Promise.all([
         MvtIncufindByDate(idRace, date),
         PondfindByDate(idRace, date)
     ]);
-    const mapAtody = new Map(); // Utilisation de Map pour la cohérence
+    const mapAtody = new Map(); 
+    const poule = new Map();
+    let count = 0;
 
     for (const element of lsPond) {
         const key = element.IdLot;
+        const date_begin = new Date(element.DatePondaison);
         if (!mapAtody.has(key)) {
-            mapAtody.set(key, { vente: 0, elevage: 0, poule : 0, idrace : element.IdRace });
+            mapAtody.set(key, { vente: 0, elevage: 0, idrace : element.IdRace });
         }
         const temp = mapAtody.get(key);
-        // console.log(element.PU);
-        const date_begin = new Date(element.DatePondaison);
+        
         if( isInIncubation(date_begin, date, element.Duree) ){
-            temp.poule += element.quantite;
+            const tmp = {
+                Daty : getBirthDay(date_begin, element.Duree),
+                Quantite: element.quantite,
+                IdRace : element.idrace,
+                Age: 0
+            };
+            const key = "LOT-AT" + count;
+            count++;
+            poule.set(key, tmp);
         } else {
             if (element.PU === null || element.PU === 0) {
                 temp.elevage += element.quantite;
@@ -74,19 +112,12 @@ export async function getSituationAtody(idRace, date) {
             temp.elevage -= element.Qte;
         }
     }
-
-    const data = { norm : mapAtody };
-
-    return mapAtody;
+    return { norm : mapAtody, second : poule };
 }
 
 export async function getLibComplet(idRace, date) {
     // Exécution parallèle pour gagner du temps
-    const [confRaceDt, confRacePS, lsLots] = await Promise.all([
-        getConfByRace(idRace),
-        getConfPSByRace(idRace),
-        getLotLib(idRace)
-    ]);
+    const lsLots = await getLotLib(idRace);
 
     let mapLots = new Map();
     for (const lot of lsLots) {
@@ -95,7 +126,7 @@ export async function getLibComplet(idRace, date) {
         }
     }
     
-    return { data: mapLots, confDt: confRaceDt, confPs: confRacePS };
+    return mapLots;
 }
 
 function getInDays(dt) {
@@ -108,55 +139,21 @@ function isInIncubation(date_begin, date_end, duree){
 }
 
 function getBirthDay(date_begin, duree){
-    return new Date();
+    return new Date(date_begin.getDate() + duree);
 }
 
-export async function getSituationForSakafo(idRace, date) {
-    const lib = await getLibComplet(idRace, date);
-    
-    const mapLot = lib.data;      // Est déjà un Map (HashMap)
-    const confPs = lib.confPs;    // Liste/Array des configurations de consommation
-    const confRaceMap = lib.confDt; // Est déjà un Map (HashMap) retourné par getConfByRace
-
-    const allRecens = await findBeforeDate(date); // Retourne un Map groupé par idLot
-    const akohoAt = await getAtodyToAkoho(idRace, date);
-    const stP = getSituationGeneralSakafo(mapLot, confPs, confRaceMap, allRecens, date);
-    const stA = getSituationGeneralSakafo(akohoAt, confPs, confRaceMap, allRecens, date);
-    const map = new Map();
-
-    for(const [key,val] of stP){
-        map.set(key, val);
-    }
-
-    for(const [key,val] of stA){
-        map.set(key, val);
-    }
-    return map;
-}
-async function getAtodyToAkoho(idRace, date) {
-    const stAt = await getSituationAtody(idRace, date);
-    const map = new Map();
-    let count = 0;
-    for(const element of stAt){
-        if( element.poule !== 0 ){
-            const temp = {
-                Daty : null,
-                Quantite: element.poule,
-                IdRace : element.idrace,
-                Age: 0
-            };
-            const key = "LOT-AT" + count;
-            count++;
-            map.set(key, temp);
-        }
-    }
-    
+export async function getSituationForSakafo(idRace, date, confPs, confRaceMap) {
+    const [mapLot, allRecens] = await Promise.all([
+         getLibComplet(idRace, date),
+        findBeforeDate(date)
+    ]);      
+    return getSituationGeneralSakafo(mapLot, confPs, confRaceMap, allRecens, date);
 }
 
-async function getSituationGeneralSakafo(mapLot, confPs, confRaceMap, allRecens, date){
+async function getSituationGeneralSakafo(mapLot, confPs, confRaceMap = Map(), allRecens = Map(), date){
     const mapResult = new Map();
     for (const [key, value] of mapLot) {
-        const recens = allRecens.get(key) || [];
+        const recens = allRecens !== undefined && allRecens !== null && allRecens.size > 0 ? allRecens.get(key) || [] : [];
         
         // Extraction depuis la HashMap de configuration de race
         const configRace = confRaceMap.get(value.IdRace) || {};

@@ -7,7 +7,7 @@ export class RaceController{
             // Envoi des données avec le code 200 (Succès)
             res.status(200).json(races);
         } catch (error) {
-            
+            console.error(error);
         }
     }
 }

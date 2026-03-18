@@ -27,3 +27,17 @@ export async function getLotLib(idRace) {
         throw error;
     }
 }
+
+export async function findAll(){
+    try {
+        const pool = await getConnection();
+        
+        // Initialisation de la requête de base
+        let sql = "SELECT * FROM Lots";
+        const request = pool.request();
+        const result = await request.query(sql);
+        return result.recordset;
+    } catch (error) {
+        
+    }
+}

@@ -5,7 +5,7 @@ import { getConnection } from "../util/dbconnect.js";
 export async function findAll() {
     try {
         const pool = await getConnection();
-        console.log("✅ Connexion à SQL Server établie (Pool unique)");
+        // console.log("✅ Connexion à SQL Server établie (Pool unique)");
         // Utilisation des "Template Literals" pour plus de clarté
         const query = 'SELECT * FROM Race';
         const rows = await pool.request().query(query);
