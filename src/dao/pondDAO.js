@@ -12,7 +12,7 @@ export async function PondfindByDate(idRace, date) {
         const request = pool.request();
         
         // Requête de base
-        let query = "SELECT * FROM  V_PONDAISON_LIB WHERE date < @date";
+        let query = "SELECT * FROM  V_PONDAISON_LIB WHERE datepondaison < @date";
         request.input('date', date);
 
         // Ajout dynamique de la clause WHERE pour la race

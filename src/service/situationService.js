@@ -8,7 +8,7 @@ export async function getSituationComplet(idRace, date) {
     // Formatage de la date pour SQL si nécessaire
     const dateStr = date instanceof Date ? date.toISOString().split('T')[0] : date;
     
-    const stAt = await getSituationAtody(idRace, dateStr);
+    
     const stSkf = await getSituationForSakafo(idRace, dateStr);
     const resultMap = new Map();
 
@@ -30,11 +30,11 @@ export async function getSituationComplet(idRace, date) {
             }
         };
 
-        const tmpAt = stAt.get(key);
-        if (tmpAt) {
-            temp.environnement.nbAtody = tmpAt.elevage;
-            temp.financier.benefice += tmpAt.vente;
-        }
+        // const tmpAt = stAt.get(key);
+        // if (tmpAt) {
+        //     temp.environnement.nbAtody = tmpAt.elevage;
+        //     temp.financier.benefice += tmpAt.vente * value.puAtody;
+        // }
 
         resultMap.set(key, temp);
     }
@@ -42,20 +42,28 @@ export async function getSituationComplet(idRace, date) {
 }
 
 export async function getSituationAtody(idRace, date) {
-    const lsIncub = await MvtIncufindByDate(idRace, date);
-    const lsPond = await PondfindByDate(idRace, date);
+    const [ lsIncub, lsPond ] = await Promise.all([
+        MvtIncufindByDate(idRace, date),
+        PondfindByDate(idRace, date)
+    ]);
     const mapAtody = new Map(); // Utilisation de Map pour la cohérence
 
     for (const element of lsPond) {
         const key = element.IdLot;
         if (!mapAtody.has(key)) {
-            mapAtody.set(key, { vente: 0, elevage: 0 });
+            mapAtody.set(key, { vente: 0, elevage: 0, poule : 0, idrace : element.IdRace });
         }
         const temp = mapAtody.get(key);
-        if (element.PU === 0) {
-            temp.elevage += element.quantite;
+        // console.log(element.PU);
+        const date_begin = new Date(element.DatePondaison);
+        if( isInIncubation(date_begin, date, element.Duree) ){
+            temp.poule += element.quantite;
         } else {
-            temp.vente += (element.quantite * element.PU);
+            if (element.PU === null || element.PU === 0) {
+                temp.elevage += element.quantite;
+            } else {
+                temp.vente += (element.quantite * element.PU);
+            }
         }
     }
 
@@ -66,6 +74,8 @@ export async function getSituationAtody(idRace, date) {
             temp.elevage -= element.Qte;
         }
     }
+
+    const data = { norm : mapAtody };
 
     return mapAtody;
 }
@@ -91,15 +101,60 @@ export async function getLibComplet(idRace, date) {
 function getInDays(dt) {
     return Math.floor(dt / (1000 * 3600 * 24));
 }
+
+function isInIncubation(date_begin, date_end, duree){
+    const diff = getInDays(date_end - date_begin);
+    return diff >= duree;
+}
+
+function getBirthDay(date_begin, duree){
+    return new Date();
+}
+
 export async function getSituationForSakafo(idRace, date) {
     const lib = await getLibComplet(idRace, date);
+    
     const mapLot = lib.data;      // Est déjà un Map (HashMap)
     const confPs = lib.confPs;    // Liste/Array des configurations de consommation
     const confRaceMap = lib.confDt; // Est déjà un Map (HashMap) retourné par getConfByRace
 
-    const mapResult = new Map();
     const allRecens = await findBeforeDate(date); // Retourne un Map groupé par idLot
+    const akohoAt = await getAtodyToAkoho(idRace, date);
+    const stP = getSituationGeneralSakafo(mapLot, confPs, confRaceMap, allRecens, date);
+    const stA = getSituationGeneralSakafo(akohoAt, confPs, confRaceMap, allRecens, date);
+    const map = new Map();
 
+    for(const [key,val] of stP){
+        map.set(key, val);
+    }
+
+    for(const [key,val] of stA){
+        map.set(key, val);
+    }
+    return map;
+}
+async function getAtodyToAkoho(idRace, date) {
+    const stAt = await getSituationAtody(idRace, date);
+    const map = new Map();
+    let count = 0;
+    for(const element of stAt){
+        if( element.poule !== 0 ){
+            const temp = {
+                Daty : null,
+                Quantite: element.poule,
+                IdRace : element.idrace,
+                Age: 0
+            };
+            const key = "LOT-AT" + count;
+            count++;
+            map.set(key, temp);
+        }
+    }
+    
+}
+
+async function getSituationGeneralSakafo(mapLot, confPs, confRaceMap, allRecens, date){
+    const mapResult = new Map();
     for (const [key, value] of mapLot) {
         const recens = allRecens.get(key) || [];
         
@@ -126,7 +181,7 @@ export async function getSituationForSakafo(idRace, date) {
         for (const r of recens) {
             const diff_date = new Date(r.DateRecensement) - new Date(temp.date_begin);
             const dataSakafo = calculerConsommation(diff_date, temp.date_begin, confPs);
-            // console.log("date rec");
+            console.log("Sakafo : "  + dataSakafo.newAge);
             // Calcul de la consommation pour la population vivante sur cette période
             temp.sakafo += (temp.qte - temp.mort) * dataSakafo.sum;
             
@@ -136,15 +191,9 @@ export async function getSituationForSakafo(idRace, date) {
             temp.age_0 = dataSakafo.newAge;
         }
 
-        // --- Calcul final (De la date du dernier recensement jusqu'à la date cible) ---
         const diff_finale = new Date(date) - new Date(temp.date_begin);
-        
-        // CORRECTION : Passage de temp.age_0 indispensable pour ne pas repartir de zéro
         const dataSakafoFinal = calculerConsommation(diff_finale, temp.date_begin, confPs);
-        
         temp.sakafo += (temp.qte - temp.mort) * dataSakafoFinal.sum;
-        
-        // Stockage dans la HashMap de résultat
         mapResult.set(key, temp);
         
         console.log(`Fin de ${key} temp.qte ` + temp.qte + " PuA :  " + temp.puA);
@@ -160,13 +209,13 @@ function calculerConsommation(diff_ms, date_debut, confSakafo) {
     let sum = 0;
     let current_age = 0;
 
-    while (day_left > 0) {
+    while (day_left > 0 && current_age < confSakafo.length) {
         let days_in_this_week = Math.min(day_left, 7 - current_day_of_week + 1);
-        let gramme_par_jour = (confSakafo[current_age]?.Quantite || 0) / 7;
+        let gramme_par_jour = (confSakafo[current_age]?.QuantiteSakafo || 0) / 7;
         
         sum += gramme_par_jour * days_in_this_week;
         day_left -= days_in_this_week;
-        current_day_of_week = 1; // On recommence en début de semaine prochaine
+        current_day_of_week = 1; 
         current_age++;
     }
     return { sum, newAge: current_age };
