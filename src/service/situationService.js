@@ -88,14 +88,14 @@ export async function getSituationAtody(idRace, date, confRace) {
         
         if( isInIncubation(date_begin, date, element.Duree) ){
             const tmp = {
-                Daty : getBirthDay(date_begin, element.Duree),
+                Daty : getBirthDay(element.DatePondaison, element.Duree),
                 Quantite: element.quantite,
-                IdRace : element.idrace,
+                IdRace : element.IdRace,
                 Age: 0
             };
-            const key = "LOT-AT" + count;
+            const cle = "LOT-AT" + count;
             count++;
-            poule.set(key, tmp);
+            poule.set(cle, tmp);
         } else {
             if (element.PU === null || element.PU === 0) {
                 temp.elevage += element.quantite;
@@ -139,7 +139,9 @@ function isInIncubation(date_begin, date_end, duree){
 }
 
 function getBirthDay(date_begin, duree){
-    return new Date(date_begin.getDate() + duree);
+    let o = new Date(date_begin);
+     o.setDate(o.getDate() + duree);
+    return o;
 }
 
 export async function getSituationForSakafo(idRace, date, confPs, confRaceMap) {
